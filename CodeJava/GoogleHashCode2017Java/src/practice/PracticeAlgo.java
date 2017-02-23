@@ -209,6 +209,7 @@ public class PracticeAlgo {
     }
     
     public static void main(String[] args) throws IOException {
-    	doIt("big"); // is either "example", "small", "medium" or "big"
+    	//doIt("big"); // is either "example", "small", "medium" or "big"
+    	System.out.println("Louis");
     }
 }
