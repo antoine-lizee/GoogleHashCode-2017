@@ -1,0 +1,35 @@
+## General ##############
+
+# For Macs
+.DS_Store
+
+# Temp files from excel and co
+.~*
+
+# Temp files emacs
+*~
+
+# intelliJ & co
+**/.idea
+
+## Python ##################
+
+# Byte-compiled / optimized / DLL files
+**/__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+.Python
+env/
+
+# Translations
+*.mo
+*.pot
+
+# Flask stuff:
+**/instance/
+.webassets-cache
+
+# IPython Notebook
+.ipynb_checkpoints
