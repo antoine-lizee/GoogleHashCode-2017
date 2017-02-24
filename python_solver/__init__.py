@@ -68,6 +68,8 @@ class World:
                 cs[0] -= size
                 cs[1].add(vid_id)
                 self.cs_for_vid[vid_id].add(cs_id)
+                return True
+        return False
 
     def write_solution(self, prefix=''):
         filename = 'output/' + self.filename + prefix + datetime.datetime.now().isoformat() + '.txt'
@@ -283,10 +285,13 @@ class World:
             if best_gain == 0:
                 print('STOPPING because breaking')
                 break
-            self.add_vid_to_cs(best_vid_id, best_cs_for_vid[best_vid_id])
-            self.total_score += best_gain / self.tot_requests * 1000
-            print('vid:%d cs:%d size:%d score_gain:%d' %
-                  (best_vid_id, best_cs_for_vid[best_vid_id], self.video_sizes[best_vid_id], best_gain / self.tot_requests * 1000))
+            has_added = self.add_vid_to_cs(best_vid_id, best_cs_for_vid[best_vid_id])
+            if has_added:
+                self.total_score += best_gain / self.tot_requests * 1000
+                print('vid:%d cs:%d size:%d score_gain:%d' %
+                      (best_vid_id, best_cs_for_vid[best_vid_id], self.video_sizes[best_vid_id], best_gain / self.tot_requests * 1000))
+            else:
+                print('vid:%d cs:%d - reloading...' % (best_vid_id, best_cs_for_vid[best_vid_id]))
             if i % 10 == 0:
                 print(sum(cs[0] for cs in self.cache_servers) / self.n_C)
                 print(self.total_score)
