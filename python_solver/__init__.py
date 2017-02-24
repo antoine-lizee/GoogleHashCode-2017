@@ -1,4 +1,5 @@
 import os
+from collections import deque
 from pprint import pprint
 
 import datetime
@@ -13,31 +14,57 @@ class World:
             first_line = next(f).strip()
             self.n_V, self.n_E, self.n_R, self.n_C, self.cs_capacity = (int(v) for v in first_line.strip().split(' '))
             pprint(self.__dict__)
-            self.videos = [int(v) for v in next(f).strip().split(' ')]
-            self.endpoints = []
+            self.video_sizes = [int(v) for v in next(f).strip().split(' ')]
+            self.endpoint_latencies_gains = []
             for i in range(self.n_E):
                 dc_latency, n_cs = (int(v) for v in next(f).strip().split(' '))
-                latencies = {}
+                latency_gains = {}
                 for k in range(n_cs):
                     id, lat = (int(v) for v in next(f).strip().split(' '))
-                    latencies[id] = lat
-                self.endpoints.append({
-                    'dc_lat': dc_latency,
-                    'latencies': latencies
-                })
+                    latency_gains[id] = dc_latency - lat
+                self.endpoint_latencies_gains.append(latency_gains)
             self.tot_requests = 0
             self.requests = []
             for i in range(self.n_R):
                 video_id, endpoint_id, n_requests = (int(v) for v in next(f).strip().split(' '))
                 self.requests.append([video_id, endpoint_id, n_requests])
                 self.tot_requests += n_requests
-            self.reset_cache_servers()
-            self.vid_to_cs = []
+        self.init_cache_servers()
+        # Optim:
+        self.init_lookup_objects()
 
-    def reset_cache_servers(self):
-        self.cache_servers = []
-        for i in range(self.n_C):
-            self.cache_servers.append([self.cs_capacity, set()])
+    def init_cache_servers(self):
+        self.cache_servers = [[self.cs_capacity, set()] for i in range(self.n_C)]
+
+    def init_lookup_objects(self):
+        self.req_ids_for_vid = [set() for i in range(self.n_V)]
+        self.req_ids_for_e = [set() for i in range(self.n_E)]
+        for i, r in enumerate(self.requests):
+            self.req_ids_for_vid[r[0]].add(i)
+            self.req_ids_for_e[r[1]].add(i)
+        self.e_for_cs = [{} for i in range(self.n_C)]
+        for i, gains in enumerate(self.endpoint_latencies_gains):
+            for cs_id, lat_gain in gains.items():
+                self.e_for_cs[cs_id][i] = lat_gain
+        self.sorted_video_ids = sorted(range(self.n_V), key=lambda id: self.video_sizes[id])
+        self.sorted_video_sizes = sorted(self.video_sizes)
+        self.sorted_video_indexes = [0] * self.n_V
+        for i, id in enumerate(self.sorted_video_ids):
+            self.sorted_video_indexes[id] = i
+
+    def req_ids_for_cs(self, cs_id):
+        reqs = set()
+        for e in self.e_for_cs[cs_id].keys():
+            reqs |= self.req_ids_for_e[e]
+        return reqs
+
+    def add_vid_to_cs(self, vid_id, cs_id):
+        if cs_id is not None:
+            cs = self.cache_servers[cs_id]
+            size = self.video_sizes[vid_id]
+            if size < cs[0]:
+                cs[0] -= size
+                cs[1].add(vid_id)
 
     def write_solution(self, prefix=''):
         filename = 'output/' + self.filename + prefix + datetime.datetime.now().isoformat() + '.txt'
@@ -54,58 +81,31 @@ class World:
         tot_score = 0.0
         tot = 0.0
         for (video_id, endpoint_id, n_requests) in self.requests:
-            latencies = self.endpoints[endpoint_id]['latencies']
-            lats = [self.endpoints[endpoint_id]['dc_lat']]
-            for cs_id, lat in latencies.items():
+            gains = self.endpoint_latencies_gains[endpoint_id]
+            applicable_gains = [0]
+            for cs_id, gain in gains.items():
                 if video_id in self.cache_servers[cs_id][1]:
-                    lats.append(lat)
-            tot_score += (self.endpoints[endpoint_id]['dc_lat'] - min(lats)) * n_requests
+                    applicable_gains.append(gain)
+            tot_score += max(applicable_gains) * n_requests
             tot += n_requests
         return tot_score / tot * 1000
 
     def best_lat_gain_for_e(self, endpoint_id, video_id):
-        size = self.videos[video_id]
-        min_lat = self.endpoints[endpoint_id]['dc_lat']
+        size = self.video_sizes[video_id]
+        max_gain = 0
         best_cs = None
-        for cs_id, lat in self.endpoints[endpoint_id]['latencies'].items():
+        for cs_id, gain in self.endpoint_latencies_gains[endpoint_id].items():
             if self.cache_servers[cs_id][0] > size:
-                if min_lat > lat:
+                if max_gain < gain:
                     best_cs = cs_id
-                    min_lat = lat
-        return best_cs, self.endpoints[endpoint_id]['dc_lat'] - min_lat
-
-    def add_vid_to_cs(self, vid_id, cs_id):
-        if cs_id is not None:
-            cs = self.cache_servers[cs_id]
-            size = self.videos[vid_id]
-            if size < cs[0]:
-                cs[0] -= size
-                cs[1].add(vid_id)
-
-    def algo2(self):
-        rs = self.requests
-        while rs:
-            best_gain = 0
-            best_request = None
-            best_cs = None
-            i_best = None
-            for i, r in enumerate(rs):
-                cs_id, gain = self.best_lat_gain_for_e(r[1], r[0])
-                if best_gain < gain:
-                    best_request = r
-                    best_cs = cs_id
-                    best_gain = gain
-                    i_best = i
-            if not best_request:
-                next
-            self.add_vid_to_cs(best_request[0], best_cs)
-            rs.pop(i_best)
+                    max_gain = gain
+        return best_cs, max_gain
 
     def util(self, r):
-        return self.best_lat_gain_for_e(r[1], r[0])[1] * r[2] # * (self.videos[r[0]]) ** (2)
+        return self.best_lat_gain_for_e(r[1], r[0])[1] * r[2] # * (self.video_sizes[r[0]]) ** (2)
 
     def algo(self, n):
-        self.reset_cache_servers()
+        self.init_cache_servers()
         w = self.n_R // n
         requests = sorted(
             self.requests,
@@ -127,52 +127,114 @@ class World:
         return self.score()
 
     def score_for_r(self, r):
-        latencies = self.endpoints[r[1]]['latencies']
-        lats = [self.endpoints[r[1]]['dc_lat']]
-        for cs_id, lat in latencies.items():
+        endpoint_gains = self.endpoint_latencies_gains[r[1]]
+        applicable_gains = [0]
+        for cs_id, lat in endpoint_gains.items():
             if r[0] in self.cache_servers[cs_id][1]:
-                lats.append(lat)
-        return (self.endpoints[r[1]]['dc_lat'] - min(lats)) * r[2] / self.tot_requests * 1000
+                applicable_gains.append(lat)
+        return max(applicable_gains) * r[2] / self.tot_requests * 1000
+
+    def total_score_for_request_ids(self, request_ids):
+        return sum(self.score_for_r(self.requests[r_id]) for r_id in request_ids)
 
     def greedy(self, n, m, verbose=True):
+        # Setup derivative estimation objects
+        width = 50
+        delta_scores = deque()
+        s_delta_scores = 0
+        delta_is = deque()
+        s_delta_is = 0
+        n_j = []
+        last_i = -1
+        dd = 0
+        # Main loop
         for i in range(n):
+            # Pick cache server at random and vid within it.
             cs_id = randint(0, self.n_C - 1)
             cs = self.cache_servers[cs_id]
             vid_id = choice(tuple(cs[1]))
-            requests = [r for r in self.requests if r[0] == vid_id]
+            request_ids = self.req_ids_for_vid[vid_id]
+            size = self.video_sizes[vid_id]
+            # Compute score loss by removing it
             if verbose:
                 print('REMOVING vid %d from %d' % (vid_id, cs_id))
-            size = self.videos[vid_id]
-            s1 = sum([self.score_for_r(r) for r in requests])
+            s1 = self.total_score_for_request_ids(request_ids)
             cs[1].remove(vid_id)
-            s2 = sum([self.score_for_r(r) for r in requests])
+            s2 = self.total_score_for_request_ids(request_ids)
             score_loss = s1 - s2
             if verbose:
                 print('sl: %d' % score_loss)
             success = False
+            # Try to add another video
             for j in range(m):
                 new_vid_id = randint(0, self.n_V - 1)
-                if self.videos[new_vid_id] < size and new_vid_id not in cs[1]:
-                    new_requests = [r for r in self.requests if r[0] == new_vid_id]
-                    s3 = sum([self.score_for_r(r) for r in new_requests])
+                if self.video_sizes[new_vid_id] < size and new_vid_id not in cs[1]:
+                    new_request_ids = self.req_ids_for_vid[new_vid_id]
+                    if not new_request_ids:
+                        if verbose:
+                            print('%d [unwanted vid] - ' % j, end='')
+                        continue
+                    s3 = self.total_score_for_request_ids(new_request_ids)
                     cs[1].add(new_vid_id)
-                    s4 = sum([self.score_for_r(r) for r in new_requests])
+                    s4 = self.total_score_for_request_ids(new_request_ids)
                     score_gain = s4 - s3
                     if score_gain <= score_loss:
                         cs[1].remove(new_vid_id)
                         if verbose:
-                            print('%d [SB] - ' % j, end='')
+                            print('%d [no gain] - ' % j, end='')
                     else:
-                        print('%d: YAY ! [%d: %d -> %d] Delta: %d' %
-                              (i, cs_id, vid_id, new_vid_id,score_gain - score_loss),
+                        success = True
+                        # Try another video ?
+                        for j in range(m):
+                            another_vid_id = randint(0, self.n_V - 1)
+                            if self.video_sizes[another_vid_id] < size and another_vid_id not in cs[1]:
+                                another_vid_request_ids = self.req_ids_for_vid[another_vid_id]
+                                if not another_vid_request_ids:
+                                    continue
+                                s5 = self.total_score_for_request_ids(new_request_ids)
+                                cs[1].add(new_vid_id)
+                                s6 = self.total_score_for_request_ids(new_request_ids)
+                                score_addition = s6 - s5
+                        # Update derivative estimation
+                        d_s = score_gain - score_loss
+                        s_delta_scores += d_s
+                        delta_scores.append(d_s)
+                        d_i = i - last_i
+                        last_i = i
+                        s_delta_is += d_i
+                        delta_is.append(d_i)
+                        n_j.append(j)
+                        if len(delta_scores) > width:
+                            s_delta_is -= delta_is.popleft()
+                            s_delta_scores -= delta_scores.popleft()
+                        dd = s_delta_scores / s_delta_is
+                        # Print out
+                        print('%4d/%2i: %.2f (Deltas: %d|%d ) [%d: %d -> %d] ' %
+                              (i, j, dd, d_s, d_i, cs_id, vid_id, new_vid_id),
                               end='\n\n' if verbose else '\n')
                         if verbose:
                             print('vid: %d , sg:%d' % (new_vid_id, score_gain))
-                        success = True
                         break
                 elif verbose:
-                    print('%d [TB] - ' % j, end='')
+                    print('%d [bad vid] - ' % j, end='')
             if not success:
                 if verbose:
                     print('ADDING BACK\n\n')
                 cs[1].add(vid_id)
+
+    @staticmethod
+    def merge_gains(gain1, gain2):
+        for k, v in gain2:
+            gain1[k] = v + gain1.get(k, 0)
+
+    def get_cs_gains_for_req_ids(self, req_ids):
+        gains = {}
+        for req_id in req_ids:
+            e = self.requests[req_id][1]
+            self.merge_gains(gains, self.endpoint_latencies_gains[e])
+
+    def algo3(self):
+        for v_id in self.sorted_video_ids:
+            req_ids = self.req_ids_for_vid[v_id]
+
+
