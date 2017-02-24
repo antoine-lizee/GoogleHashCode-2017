@@ -34,7 +34,9 @@ class World:
         self.init_lookup_objects()
 
     def init_cache_servers(self):
+        self.total_score = 0
         self.cache_servers = [[self.cs_capacity, set()] for i in range(self.n_C)]
+        self.cs_for_vid = [set() for i in range(self.n_V)]
 
     def init_lookup_objects(self):
         self.req_ids_for_vid = [set() for i in range(self.n_V)]
@@ -62,9 +64,10 @@ class World:
         if cs_id is not None:
             cs = self.cache_servers[cs_id]
             size = self.video_sizes[vid_id]
-            if size < cs[0]:
+            if size <= cs[0]:
                 cs[0] -= size
                 cs[1].add(vid_id)
+                self.cs_for_vid[vid_id].add(cs_id)
 
     def write_solution(self, prefix=''):
         filename = 'output/' + self.filename + prefix + datetime.datetime.now().isoformat() + '.txt'
@@ -222,19 +225,72 @@ class World:
                     print('ADDING BACK\n\n')
                 cs[1].add(vid_id)
 
-    @staticmethod
-    def merge_gains(gain1, gain2):
-        for k, v in gain2:
-            gain1[k] = v + gain1.get(k, 0)
-
-    def get_cs_gains_for_req_ids(self, req_ids):
-        gains = {}
+    def best_cs_for_vid(self, vid_id):
+        size = self.video_sizes[vid_id]
+        req_ids = self.req_ids_for_vid[vid_id]
+        cs_gains = [0] * self.n_C
         for req_id in req_ids:
-            e = self.requests[req_id][1]
-            self.merge_gains(gains, self.endpoint_latencies_gains[e])
+            r = self.requests[req_id]
+            lat_gains = self.endpoint_latencies_gains[r[1]]
+            existing_gain = max((lat_gains.get(c, 0) for c in self.cs_for_vid[vid_id]), default=0)
+            for cs_id in range(self.n_C):
+                cs = self.cache_servers[cs_id]
+                if vid_id in cs[1] or cs[0] < size:
+                    continue
+                req_cs_gain = (self.endpoint_latencies_gains[r[1]].get(cs_id, 0) - existing_gain) * r[2]
+                if req_cs_gain > 0:
+                    cs_gains[cs_id] += req_cs_gain
+        return max(enumerate(cs_gains), key=lambda x: x[1])
 
-    def algo3(self):
-        for v_id in self.sorted_video_ids:
-            req_ids = self.req_ids_for_vid[v_id]
+    def algo_vid_optim(self, steps, n_max):
+        for i in range(steps):
+            # Optimal loop
+            best_gain_for_vid = []
+            best_cs_for_vid = []
+            for vid_id in range(self.n_V):
+                best_cs_id, best_cs_gain = self.best_cs_for_vid(vid_id)
+                best_gain_for_vid.append(best_cs_gain)
+                best_cs_for_vid.append(best_cs_id)
+            best_gains = sorted(enumerate(best_gain_for_vid), key=lambda x: -x[1])
+            best_vid_id, best_gain = best_gains[0]
+            if best_gain == 0:
+                return
+            for n in range(n_max):
+                best_vid_id, best_gain = best_gains[n]
+                if best_gain == 0:
+                    break
+                self.add_vid_to_cs(best_vid_id, best_cs_for_vid[best_vid_id])
+                self.total_score += best_gain / self.tot_requests * 1000
+                print('vid:%d cs:%d score_gain:%d' %
+                      (best_vid_id, best_cs_for_vid[best_vid_id], best_gain / self.tot_requests * 1000))
+            if i % 10 == 0 or i == steps-1:
+                print(sum(cs[0] for cs in self.cache_servers) / self.n_C)
+                print(self.total_score)
 
-
+    def algo_vid(self, max_steps=None):
+        if max_steps is None:
+            max_steps = self.n_V * 5
+        # First Optimal loop
+        best_gain_for_vid = []
+        best_cs_for_vid = []
+        for vid_id in range(self.n_V):
+            best_cs_id, best_cs_gain = self.best_cs_for_vid(vid_id)
+            best_gain_for_vid.append(best_cs_gain)
+            best_cs_for_vid.append(best_cs_id)
+        for i in range(max_steps):
+            # Get best vid/cs couple and add it
+            best_vid_id, best_gain = max(enumerate(best_gain_for_vid), key=lambda x: x[1])
+            if best_gain == 0:
+                print('STOPPING because breaking')
+                break
+            self.add_vid_to_cs(best_vid_id, best_cs_for_vid[best_vid_id])
+            self.total_score += best_gain / self.tot_requests * 1000
+            print('vid:%d cs:%d size:%d score_gain:%d' %
+                  (best_vid_id, best_cs_for_vid[best_vid_id], self.video_sizes[best_vid_id], best_gain / self.tot_requests * 1000))
+            if i % 10 == 0:
+                print(sum(cs[0] for cs in self.cache_servers) / self.n_C)
+                print(self.total_score)
+            # Update main table
+            best_cs_for_vid[best_vid_id], best_gain_for_vid[best_vid_id] = self.best_cs_for_vid(best_vid_id)
+        print(sum(cs[0] for cs in self.cache_servers) / self.n_C)
+        print(self.total_score)
