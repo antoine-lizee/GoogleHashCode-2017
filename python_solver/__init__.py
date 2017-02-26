@@ -72,7 +72,7 @@ class World:
         return False
 
     def write_solution(self, prefix=''):
-        filename = 'output/' + self.filename + prefix + datetime.datetime.now().isoformat() + '.txt'
+        filename = 'output/%s_%.0f_%s_%s.txt' % (self.filename, self.score(), prefix, datetime.datetime.now().isoformat())
         cs = []
         for i, (cap, vids) in enumerate(self.cache_servers):
             if vids:
@@ -269,7 +269,7 @@ class World:
                 print(sum(cs[0] for cs in self.cache_servers) / self.n_C)
                 print(self.total_score)
 
-    def algo_vid(self, max_steps=None):
+    def algo_vid(self, power=1, max_steps=None):
         if max_steps is None:
             max_steps = self.n_V * 5
         # First Optimal loop
@@ -281,21 +281,23 @@ class World:
             best_cs_for_vid.append(best_cs_id)
         for i in range(max_steps):
             # Get best vid/cs couple and add it
-            best_vid_id, best_gain = max(enumerate(best_gain_for_vid), key=lambda x: x[1])
+            best_vid_id, best_gain = max(enumerate(best_gain_for_vid),
+                                         key=lambda x: x[1] / self.video_sizes[x[0]] ** power)
             if best_gain == 0:
                 print('STOPPING because breaking')
                 break
             has_added = self.add_vid_to_cs(best_vid_id, best_cs_for_vid[best_vid_id])
             if has_added:
                 self.total_score += best_gain / self.tot_requests * 1000
-                print('vid:%d cs:%d size:%d score_gain:%d' %
-                      (best_vid_id, best_cs_for_vid[best_vid_id], self.video_sizes[best_vid_id], best_gain / self.tot_requests * 1000))
-            else:
-                print('vid:%d cs:%d - reloading...' % (best_vid_id, best_cs_for_vid[best_vid_id]))
+                # print('vid:%d cs:%d size:%d score_gain:%d' %
+                #       (best_vid_id, best_cs_for_vid[best_vid_id], self.video_sizes[best_vid_id], best_gain / self.tot_requests * 1000))
+            # else:
+            #     print('vid:%d cs:%d - reloading...' % (best_vid_id, best_cs_for_vid[best_vid_id]))
             if i % 10 == 0:
-                print(sum(cs[0] for cs in self.cache_servers) / self.n_C)
-                print(self.total_score)
+                print('%5d: %6d server size left: %.1f' %
+                      (i, self.total_score, sum(cs[0] for cs in self.cache_servers) / self.n_C))
             # Update main table
             best_cs_for_vid[best_vid_id], best_gain_for_vid[best_vid_id] = self.best_cs_for_vid(best_vid_id)
-        print(sum(cs[0] for cs in self.cache_servers) / self.n_C)
-        print(self.total_score)
+        print('%5d: %6d server size left: %.1f' %
+              (i, self.total_score, sum(cs[0] for cs in self.cache_servers) / self.n_C))
+        return self.total_score
