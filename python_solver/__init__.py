@@ -38,6 +38,17 @@ class World:
         self.cache_servers = [[self.cs_capacity, set()] for i in range(self.n_C)]
         self.cs_for_vid = [set() for i in range(self.n_V)]
 
+    def set_cache_server_to(self, cs_id, vids):
+        for vid in self.cache_servers[cs_id][1]:
+            self.cs_for_vid[vid].remove(cs_id)
+
+        self.cache_servers[cs_id] = [
+            self.cs_capacity - sum(self.video_sizes[v] for v in vids),
+            vids,
+            ]
+        for vid in vids:
+            self.cs_for_vid[vid].add(cs_id)
+
     def init_lookup_objects(self):
         self.req_ids_for_vid = [set() for i in range(self.n_V)]
         self.req_ids_for_e = [set() for i in range(self.n_E)]
@@ -81,6 +92,18 @@ class World:
             f.write(str(len(cs)) + '\n')
             for line in cs:
                 f.write(line + '\n')
+
+    def load_solution(self, filename):
+        self.init_cache_servers()
+        with open(filename, 'r') as f:
+            first_line = next(f).strip()
+            n_C = int(first_line)
+            for i in range(n_C):
+                values = next(f).strip().split(' ')
+                cs_id = int(values[0])
+                vids = set(int(v) for v in values[1:])
+                self.set_cache_server_to(cs_id, vids)
+        print('Loaded %d caches servers for a solution worth %d' % (n_C, self.score()))
 
     def score(self):
         tot_score = 0.0
@@ -239,7 +262,7 @@ class World:
                 cs = self.cache_servers[cs_id]
                 if vid_id in cs[1] or cs[0] < size:
                     continue
-                req_cs_gain = (self.endpoint_latencies_gains[r[1]].get(cs_id, 0) - existing_gain) * r[2]
+                req_cs_gain = (lat_gains.get(cs_id, 0) - existing_gain) * r[2]
                 if req_cs_gain > 0:
                     cs_gains[cs_id] += req_cs_gain
         return max(enumerate(cs_gains), key=lambda x: x[1])
@@ -269,9 +292,11 @@ class World:
                 print(sum(cs[0] for cs in self.cache_servers) / self.n_C)
                 print(self.total_score)
 
-    def algo_vid(self, power=1, max_steps=None):
+    def algo_vid(self, power_0=1, power_1=None, max_steps=None):
         if max_steps is None:
             max_steps = self.n_V * 5
+        power_1 = power_1 or power_0
+        power = power_0
         # First Optimal loop
         best_gain_for_vid = []
         best_cs_for_vid = []
@@ -294,10 +319,69 @@ class World:
             # else:
             #     print('vid:%d cs:%d - reloading...' % (best_vid_id, best_cs_for_vid[best_vid_id]))
             if i % 10 == 0:
-                print('%5d: %6d server size left: %.1f' %
-                      (i, self.total_score, sum(cs[0] for cs in self.cache_servers) / self.n_C))
+                avg_server_size = sum(cs[0] for cs in self.cache_servers) / self.n_C
+                print('%5d: %6d server size left: %.1f (power=%.3f)' %
+                      (i, self.total_score, avg_server_size, power))
+                power = power_1 - avg_server_size / self.cs_capacity * (power_1 - power_0)
             # Update main table
             best_cs_for_vid[best_vid_id], best_gain_for_vid[best_vid_id] = self.best_cs_for_vid(best_vid_id)
         print('%5d: %6d server size left: %.1f' %
               (i, self.total_score, sum(cs[0] for cs in self.cache_servers) / self.n_C))
         return self.total_score
+
+    def vid_gains_for_cs(self, cs_id):
+        vid_gains = [0] * self.n_V
+        for vid_id in range(self.n_V):
+            req_ids = self.req_ids_for_vid[vid_id]
+            for req_id in req_ids:
+                r = self.requests[req_id]
+                lat_gains = self.endpoint_latencies_gains[r[1]]
+                existing_gain = max((lat_gains.get(c, 0) for c in self.cs_for_vid[vid_id] - {cs_id}), default=0)
+                req_cs_gain = (lat_gains.get(cs_id, 0) - existing_gain) * r[2]
+                if req_cs_gain > 0:
+                    vid_gains[vid_id] += req_cs_gain
+        return vid_gains
+
+    def current_optim_vid_set_for_cs(self, cs_id, power=1):
+        vgs = self.vid_gains_for_cs(cs_id)
+        full_vgs = [
+            vg + (self.video_sizes[vg[0]], vg[1] / self.video_sizes[vg[0]] ** power) for vg in enumerate(vgs)
+            if vg[1] > 0
+            ]
+        mem = self.cs_capacity
+        current_vids = self.cache_servers[cs_id][1]
+        optimal_vids = set()
+        optimal_gain = 0
+        for i, fvg in enumerate(sorted(full_vgs, reverse=True, key=lambda x: x[3])):
+            if mem >= fvg[2]:
+                mem -= fvg[2]
+                optimal_vids.add(fvg[0])
+                optimal_gain += fvg[1]
+                if mem == 0:
+                    # print('breaking at %dth video seen, added %d in total' % (i, len(optimal_vids)))
+                    break
+        if current_vids ^ optimal_vids:
+            current_gain = sum(vgs[v_id] for v_id in current_vids)
+            if current_gain < optimal_gain:
+                return (optimal_gain - current_gain) / self.tot_requests * 1000, optimal_vids
+        return 0, set()
+
+    def greedy_vid(self, power=1, steps=400):
+        cs_gains = []
+        print('Computing initial optimal vid for cs matrix...')
+        for cs_id in range(self.n_C):
+            cs_gains.append(self.current_optim_vid_set_for_cs(cs_id, power))
+        print('Done. Starting iterating...')
+        for i in range(steps):
+            max_cs_id, cs_gain = max(enumerate(cs_gains), key=lambda x: x[1][0])
+            if cs_gain[0] == 0:
+                print('No more to be gained...')
+                break
+            update = self.current_optim_vid_set_for_cs(max_cs_id, power)
+            if cs_gain[0] != update[0]:
+                print('Stale result, continuing...')
+                cs_gains[max_cs_id] = update
+                continue
+            print('Resetting cs %d at optimal point (gain %d)' % (max_cs_id, cs_gain[0]))
+            self.set_cache_server_to(max_cs_id, cs_gain[1])
+            cs_gains[max_cs_id] = self.current_optim_vid_set_for_cs(max_cs_id, power)
