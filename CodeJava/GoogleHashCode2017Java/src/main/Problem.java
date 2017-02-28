@@ -7,7 +7,7 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.HashMap;
-
+import java.util.HashSet;
 
 public class Problem {
 	
@@ -17,7 +17,8 @@ public class Problem {
 		
 		int[] videoSizes; // of size V
 		ArrayList<EndPoint> endpoints;
-		ArrayList<Request> requests;
+		HashSet<Request> requests;
+		HashMap<Integer, ArrayList<Request>> videoIdToRequests; // all the requests that need this video
 		
 	    public Problem(File file) throws IOException {
 			
@@ -38,7 +39,7 @@ public class Problem {
 				  
 				  videoSizes = new int[V];
 				  endpoints = new ArrayList<EndPoint>();
-				  requests = new ArrayList<Request>();
+				  requests = new HashSet<Request>();
 			  } else if(numLine==1){
 				  String[] ss = strLine.split(" ");
 				  for(int i=0; i<ss.length; i++) {
@@ -75,7 +76,7 @@ public class Problem {
 					  request.Rv = Integer.parseInt(ss[0]);
 					  request.Re = Integer.parseInt(ss[1]);
 					  request.Rn = Integer.parseInt(ss[2]);
-					  
+					  request.id = requests.size();
 					  requests.add(request);
 				  }
 				  
@@ -86,6 +87,15 @@ public class Problem {
 
 			//Close the input stream
 			br.close();
+			
+			videoIdToRequests = new HashMap<Integer, ArrayList<Request>>();
+			for(int videoId = 0; videoId<this.V; videoId++) {
+				videoIdToRequests.put(videoId,  new ArrayList<Request>());
+			}
+			for(Request request : requests) {
+				videoIdToRequests.get(request.Rv).add(request);
+			}
+			
 		}
 		
 	    public String toString() {
@@ -98,7 +108,7 @@ public class Problem {
 		}
 		
 	    public static void main(String[] args) throws IOException {
-			File f = new File("data/input/example.in");
+			File f = new File("data/input/trending_today.in");
 			Problem problem = new Problem(f);
 			System.out.println(problem);
 		}
