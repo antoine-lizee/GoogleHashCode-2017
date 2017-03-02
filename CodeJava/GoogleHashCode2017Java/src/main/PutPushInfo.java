@@ -91,6 +91,7 @@ public class PutPushInfo {
 			serverVideos.add(video);
 		}
 		
+		// option 1: sort videos in increasing loss per byte, then take by smallest loss per byte
 		Collections.sort(serverVideos, new Comparator<Video>() {
 		    public int compare(Video a, Video b) {
 		    	float lossPerMbA = a.lossOut*1f/a.size;
@@ -103,46 +104,120 @@ public class PutPushInfo {
 		});
 		
 		// compute the loss to make room for this video
-		int spaceFreed = 0;
-		int totalLoss = 0;
-		ArrayList<Integer> videosToTakeOut = new ArrayList<Integer>();
+		int lpmf_spaceFreed = 0;
+		int lpmf_totalLoss = 0;
+		ArrayList<Integer> lpmf_videos = new ArrayList<Integer>();
 		for(Video video : serverVideos) {
-			totalLoss += video.lossOut;
-			videosToTakeOut.add(video.videoId);
-			spaceFreed += video.size;
+			lpmf_totalLoss += video.lossOut;
+			lpmf_videos.add(video.videoId);
+			lpmf_spaceFreed += video.size;
 			
-			if(server.getSpaceTaken() - spaceFreed + this.videoSize <= algo.problem.X){
+			if(server.getSpaceTaken() - lpmf_spaceFreed + this.videoSize <= algo.problem.X){
 				break;
 			}
 		}
 		
-		// also compare to the loss for each individual video
+		// options 2: sort videos in increasing loss, then take by smallest loss
+		Collections.sort(serverVideos, new Comparator<Video>() {
+		    public int compare(Video a, Video b) {
+		    	return Long.compare(a.lossOut, b.lossOut);
+		    }
+		});
+		
+		// compute the loss to make room for this video
+		int lo_spaceFreed = 0;
+		int lo_totalLoss = 0;
+		ArrayList<Integer> lo_videos = new ArrayList<Integer>();
+		for(Video video : serverVideos) {
+			lo_totalLoss += video.lossOut;
+			lo_videos.add(video.videoId);
+			lo_spaceFreed += video.size;
+			
+			if(server.getSpaceTaken() - lo_spaceFreed + this.videoSize <= algo.problem.X){
+				break;
+			}
+		}
+		
+		
+		// option 3:  also compare to the loss for each individual video, and pairs of small videos 
 		Video bestSingleVideo = null;
 		long minSingleVideoLoss = Integer.MAX_VALUE;
+		List<Video> smallVideos = new ArrayList<Video>(); // videos that are not enough alone
 		for(Video video : serverVideos) {
 			if(server.getSpaceTaken() - video.size + this.videoSize <= algo.problem.X) {
 				if(video.lossOut < minSingleVideoLoss) {
 					minSingleVideoLoss = video.lossOut;
 					bestSingleVideo = video;
 				}
+			} else {
+				smallVideos.add(video);
 			}
 		}
 		
-		if(bestSingleVideo != null && minSingleVideoLoss < totalLoss) {
+		Video bestPairedVideo_i = null;
+		Video bestPairedVideo_j = null;
+		long minPairedVideosLoss = Integer.MAX_VALUE;
+		
+		
+		for(int i=0; i<smallVideos.size(); i++) {
+			Video vi = smallVideos.get(i);
+			for(int j=i+1; j<smallVideos.size(); j++) {
+				Video vj = smallVideos.get(j);
+				if(server.getSpaceTaken() - vi.size - vj.size + this.videoSize <= algo.problem.X) {
+					long pairedLoss = vi.lossOut + vj.lossOut;
+					if(pairedLoss < minPairedVideosLoss) {
+						minPairedVideosLoss = pairedLoss;
+						bestPairedVideo_i = vi;
+						bestPairedVideo_j = vj;
+					}
+				}
+			}
+		}
+		
+		boolean singleIsBest = bestSingleVideo != null 
+				&& minSingleVideoLoss <= lpmf_totalLoss 
+				&& minSingleVideoLoss <= lo_totalLoss
+				&& minSingleVideoLoss <= minPairedVideosLoss;
+		
+		boolean pairIsBest = bestPairedVideo_i != null && bestPairedVideo_j != null 
+				&& minPairedVideosLoss <= lpmf_totalLoss 
+				&& minPairedVideosLoss <= lo_totalLoss
+				&& minPairedVideosLoss <= minSingleVideoLoss;
+				
+		
+		if(singleIsBest) {
 			// we found a good single video to take out
 			this.sumLoss = minSingleVideoLoss;
 			videosOut = new ArrayList<Integer>();
 			videosOut.add(bestSingleVideo.videoId);
 			return true;
-		} else if(server.getSpaceTaken() - spaceFreed + this.videoSize <= algo.problem.X) {
-			// we use the videos we found
-			sumLoss = totalLoss;
-			videosOut = videosToTakeOut;
+		} else if(pairIsBest) {
+			this.sumLoss = minPairedVideosLoss;
+			videosOut = new ArrayList<Integer>();
+			videosOut.add(bestPairedVideo_i.videoId);
+			videosOut.add(bestPairedVideo_j.videoId);
 			return true;
 		} else {
-			// no way to free enough space
-			return false;
-		}
+			if(lpmf_totalLoss <= lo_totalLoss) {
+				if(server.getSpaceTaken() - lpmf_spaceFreed + this.videoSize <= algo.problem.X) {
+					sumLoss = lpmf_totalLoss;
+					videosOut = lpmf_videos;
+					return true;
+				} else {
+					// no way to free enough space
+					return false;
+				}
+			} else {
+				if(server.getSpaceTaken() - lo_spaceFreed + this.videoSize <= algo.problem.X) {
+					sumLoss = lo_totalLoss;
+					videosOut = lo_videos;
+					return true;
+				} else {
+					// no way to free enough space
+					return false;
+				}
+			}
+		} 
 		
 	}
 }

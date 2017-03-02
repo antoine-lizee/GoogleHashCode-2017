@@ -657,19 +657,26 @@ public class Algo {
 	}
 	
 	public static void main(String[] args) throws IOException {
-		int max = 0;
+		int score = 0;
 		
 		String[] strings = new String[]{"example", "me_at_the_zoo", "trending_today", "videos_worth_spreading", "kittens"};
 		
-		for(String s : new String[]{"videos_worth_spreading"}){
+		String[] paths = new String[]{null, "keeper/manu_me_at_the_zoo_63.out", null, "keeper/manu_videos_worth_spreading_63.out", "keeper/manu_kittens_63.out"};
+		
+		
+		for(int n : new int[]{1, 3, 4}){
 			System.out.println("\n*********************************************\n");
 			
-			Algo algo = readSolution(s, 62);
+			
+			
+			//Algo algo = readSolution(strings[n], 62);
+			Algo algo = readSolution(strings[n], 0, paths[n]);
+			
 			//algo.studyRequests();
 			System.out.println(algo.getCurretInfo());
 			
-			if(!s.equals("me_at_the_zoo")) {
-				max+=algo.computeUpperBound2();
+			if(!strings[n].equals("example")) {
+				score+=algo.computeScoreFinal();
 			}
 			
 			
@@ -683,6 +690,7 @@ public class Algo {
 			System.out.println(String.format("Score final: %d", scoreFinal));
 			*/
 		}
-		System.out.println("max: " + max);
+		score += 499991;
+		System.out.println("total score: " + score);
 	}
 }

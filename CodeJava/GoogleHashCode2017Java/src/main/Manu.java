@@ -27,9 +27,9 @@ public class Manu {
 		algo.servers.get(2).putVideo(1, algo, false);
 	}
 	
-	public static void DoAlgo1(Algo algo, int maxOuterIter, int maxPutPerIter, int intervalBigStep, File outFile, boolean allowPush) {
+	public static void DoAlgo1(Algo algo, int maxOuterIter, int maxPutPerIter, int maxPutPerBigStep, int intervalBigStep, File outFile, boolean allowPush) {
 		
-		List<Video> initialAllocations = fillWithOptimVid(algo, maxOuterIter, maxPutPerIter, intervalBigStep, outFile, true, allowPush);
+		List<Video> initialAllocations = fillWithOptimVid(algo, maxOuterIter, maxPutPerIter, maxPutPerBigStep, intervalBigStep, outFile, true, allowPush);
 		System.out.println(String.format("Initial allocations: %d", initialAllocations.size()));
 		
 		//int DEPTH = 100;
@@ -38,7 +38,7 @@ public class Manu {
     }	
 	
 	// take out the last "depth" allocations and try to do better
-	protected static void improveAtDepth(Algo algo, int depth, int maxOuterIter, int maxPutPerIter, List<Video> allocations) {
+	protected static void improveAtDepth(Algo algo, int depth, int maxOuterIter, int maxPutPerIter, int maxPutPerBigStep, List<Video> allocations) {
 		
 		List<Video> videosToCheck = new ArrayList<Video>();
 		for(int i=allocations.size()-1; i>=Math.max(0, allocations.size()-depth); i--) {
@@ -66,7 +66,7 @@ public class Manu {
 				continue;
 			} 
 			
-			List<Video> tmpAllocations = fillWithOptimVid(algo, maxOuterIter, maxPutPerIter, 100, null, false, false);
+			List<Video> tmpAllocations = fillWithOptimVid(algo, maxOuterIter, maxPutPerIter, 100, 100, null, false, false);
 			
 			video.scoreFinalIfPut = algo.computeScoreFinal();
 			
@@ -106,7 +106,7 @@ public class Manu {
     }
 	
 	// can start this from any valid state
-	private static List<Video> fillWithOptimVid(Algo algo, int maxIterations, int maxPutPerIter, int intervalBigStep, File outFile, boolean verbose, boolean allowPush) {
+	private static List<Video> fillWithOptimVid(Algo algo, int maxIterations, int maxPutPerIter, int maxPutInBigStep, int intervalBigStep, File outFile, boolean verbose, boolean allowPush) {
 		
 		int currentScoreFinal = algo.computeScoreFinal();
 		int bestScoreFinal = currentScoreFinal; 
@@ -122,19 +122,24 @@ public class Manu {
     		}
     		
     		int maxPutThisIter = maxPutPerIter;
-    		if(n%intervalBigStep==0) {
-    			if(n>5) {
-    				//maxPutThisIter = 10*maxPutPerIter;
-    				maxPutThisIter = (5+rn.nextInt(50))*maxPutPerIter;
-    				//cleanUp(algo);
-    			}
+    		if(/*n>0 &&*/ n%intervalBigStep==0) {
     			
-    			
+    			//maxPutThisIter = 10*maxPutPerIter;
+    			maxPutThisIter = (int)((0.5d+rn.nextDouble())*maxPutInBigStep);
+    			System.out.println("Big step, max put this big step: " + maxPutThisIter);
+    			//cleanUp(algo);
     		}
     		
     		if(verbose) {
-				System.out.println(n + " iterations, current score final: " + currentScoreFinal);
+    			if(currentScoreFinal>bestScoreFinal-2000) {
+    				System.out.println(n + " iterations, current score final: " + currentScoreFinal);
+    			}
 			}
+    		
+    		/* doesn't help
+    		if(n%50==0) {
+    			removeRandomVideos(algo, 1, rn);
+    		}*/
     		
     		{
     			currentScoreFinal = algo.computeScoreFinal(); 
@@ -142,10 +147,11 @@ public class Manu {
     				bestScoreFinal = currentScoreFinal;
         			try {algo.printToFile(outFile);}
     				catch(Exception e){};
+    				System.out.print(" score " + currentScoreFinal+ "   ");
     			}
     		}
     		
-			// now, for each video in the best videos to put, compute the gain after next step
+			// now, for each video, compute the gain/loss after next step
     		List<Integer> videosToCompute = new ArrayList<Integer>();
     		for(int i=0; i<algo.problem.V; i++) videosToCompute.add(i);
     		
@@ -293,7 +299,7 @@ public class Manu {
 		
 		Collections.sort(videos, new Comparator<Video>() {
 		    public int compare(Video a, Video b) {
-		    	//return Integer.compare(a.tmpBestGain, b.tmpBestGain);
+		    	//return Long.compare(a.ppi.getAbsGain(), b.ppi.getAbsGain());
 		    	return Double.compare(a.ppi.getAbsGain()*1d/Math.pow(a.ppi.videoSize, POWER), b.ppi.getAbsGain()*1d/Math.pow(b.ppi.videoSize, POWER));
 		    }
 		});
@@ -503,6 +509,7 @@ public class Manu {
     		if(cs.videos.size()==0) continue;
     		int videoId = CacheServer.randomIntFromSet(cs.videos, rn);
     		cs.removeVideoNoCount(videoId, algo.problem);
+    		algo.setDirty(videoId);
     		numVideosRemoved++;
     		// now tell the requests using the video that its over
     		// tell the requests using this video on this server that they cannot anymore
@@ -571,18 +578,18 @@ public class Manu {
     	return 1d;
     }*/
     
-    private static double POWER = 1d;//0.85d; //1d
+    private static double POWER = 1d;//0.75d;//0.85d; //1d
     
     public static Random rn;
     
-    public static void doIt(String nameOfFile, int maxOuterIter, int maxPutPerIter, int intervalBigStep) throws IOException {
+    public static void doIt(String nameOfFile, int maxOuterIter, int maxPutPerIter, int maxPutPerBigStep, int intervalBigStep) throws IOException {
     	//Algo algo = new Algo(new Problem(new File("data/input/"+nameOfFile+".in")), nameOfFile);
     	Algo algo = Algo.readSolution(nameOfFile, 63);
 	    
     	File outFile = new File("data/output/manu_"+nameOfFile+"_63.out");
 	    
-	    //DoAlgo1(algo, maxOuterIter, maxPutPerIter, intervalBigStep, outFile, false);
-	    DoAlgo1(algo, maxOuterIter, maxPutPerIter, intervalBigStep, outFile, true);
+    	//DoAlgo1(algo, maxOuterIter, maxPutPerIter, maxPutPerBigStep, intervalBigStep, outFile, false);
+  	    DoAlgo1(algo, maxOuterIter, maxPutPerIter, maxPutPerBigStep, intervalBigStep, outFile, true);
 	    algo.printToFile(outFile);
 	    boolean correct = algo.checkCorrect();  
 	    System.out.println(String.format("Correct: %b", correct));
@@ -593,11 +600,11 @@ public class Manu {
     
 	public static void main(String[] args) throws IOException {
 		rn = new Random(23); // repeatable
-		//doIt("me_at_the_zoo", Integer.MAX_VALUE, 3, 100);
+		//doIt("me_at_the_zoo", Integer.MAX_VALUE, 5, 10, 500);
 		//doIt("example", Integer.MAX_VALUE, 0);
-		doIt("videos_worth_spreading", Integer.MAX_VALUE, 5, 100); //(25, 200)
-		//doIt("trending_today", Integer.MAX_VALUE, 100); 
-		//doIt("kittens", Integer.MAX_VALUE, 20, 50);
+		doIt("videos_worth_spreading", Integer.MAX_VALUE, 1, 100, 100); //(25, 250, 200) (1, 100, 100)
+		//doIt("trending_today", Integer.MAX_VALUE, 1, 100, 10); 
+		//doIt("kittens", Integer.MAX_VALUE, 10, 100, 100); // (10, 100, 100)
 		
 	}
 	
