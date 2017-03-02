@@ -4,21 +4,24 @@ import java.util.*;
 
 public class Video {
 
-	public int id;
+	public int videoId;
 	public int size;
 	
-	public int tmpBestGain;
+	public long tmpBestGain;
 	public CacheServer tmpBestServer;
-	public int lossOut;
+	public long lossOut;
 	
 	public List<Video> bestNextSteps;
-	public float cumulScoreNextSteps;
+	public int scoreFinalIfPut;
+	
+	public PutPushInfo ppi;
 	
 	public Video(int videoId, Problem problem) {
-		this.id = videoId;
-		this.size = problem.videoSizes[this.id];
+		this.videoId = videoId;
+		this.size = problem.videoSizes[this.videoId];
 		tmpBestGain= 0;
 		tmpBestServer = null;
-		lossOut = 0;
+		lossOut = Integer.MAX_VALUE;
 	}
+	
 }

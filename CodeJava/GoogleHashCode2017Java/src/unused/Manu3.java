@@ -1,4 +1,4 @@
-package main;
+package unused;
 
 import java.io.File;
 import java.io.IOException;
@@ -12,6 +12,14 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+
+import main.Algo;
+import main.CacheServer;
+import main.EndPoint;
+import main.Manu;
+import main.Request;
+import main.Video;
+
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class Manu3 {
@@ -31,10 +39,8 @@ public class Manu3 {
 			    int scoreFinal = algo.computeScoreFinal();
 			    System.out.println(String.format("nIter: %d, correct: %b, score: %d", nIter, correct, scoreFinal));
 				
-			    if(nIter>5) {
-			    	try{algo.printToFile(outFile);}
-			    	catch(Exception e){System.out.println(e.getMessage());return;}
-			    }
+			   try{algo.printToFile(outFile);}
+			   catch(Exception e){System.out.println(e.getMessage());}
 			}
 			
 			if(!doStep(algo, requestsPerStep, verbose)) {
@@ -78,7 +84,7 @@ public class Manu3 {
 
 		final ArrayList<MakeRoomInfo> goodMoves = new ArrayList<MakeRoomInfo>();
 		final List<Request> requestsToLook = orderedRequests.subList(0, Math.min(orderedRequests.size(), numRequestsToLook));
-		ExecutorService executor = Executors.newFixedThreadPool(7); 
+		ExecutorService executor = Executors.newFixedThreadPool(Manu.NUM_THREADS); 
 		final AtomicInteger processed = new AtomicInteger();
 		
 		// Spawn threads
@@ -134,7 +140,7 @@ public class Manu3 {
 
 		Collections.sort(goodMoves, new Comparator<MakeRoomInfo>() {
 			public int compare(MakeRoomInfo a, MakeRoomInfo b) {
-				return Integer.compare(a.absGain, b.absGain);
+				return Long.compare(a.absGain, b.absGain);
 			}
 		});
 		Collections.reverse(goodMoves);
@@ -148,11 +154,11 @@ public class Manu3 {
 	
 	
 	private static class MakeRoomInfo{
-		int totalLoss;
+		long totalLoss;
 		ArrayList<Integer> videosToTakeOut;
 		CacheServer cs;
-		int gainPut;
-		int absGain;
+		long gainPut;
+		long absGain;
 		Request request;
 		
 		public MakeRoomInfo(CacheServer cs) {
@@ -185,7 +191,7 @@ public class Manu3 {
 			}
 		}
 		
-		boolean videoPut = move.cs.putVideo(move.request.Rv, algo.problem); 
+		boolean videoPut = move.cs.putVideo(move.request.Rv, algo, false); 
 		
 		if(!videoPut) {
 			System.out.println("error");
@@ -196,7 +202,7 @@ public class Manu3 {
 		for(int videoToTakeOut : move.videosToTakeOut) {
 			Video video = bestServerForVideo(videoToTakeOut, algo);
 			if(video.tmpBestServer!=null) {
-				video.tmpBestServer.putVideo(videoToTakeOut, algo.problem);
+				video.tmpBestServer.putVideo(videoToTakeOut, algo, false);
 			}
 		}
 		
@@ -209,7 +215,7 @@ public class Manu3 {
 		video.tmpBestGain = 0;
 		
 		for(CacheServer cs : algo.getPotentialServers(videoId)) {
-			int gain = Manu.gainPut(videoId, cs, algo.problem, false);
+			long gain = Manu.computeGainPut(videoId, cs, algo.problem, false);
 			if(gain > video.tmpBestGain) {
 				video.tmpBestGain = gain;
 				video.tmpBestServer = cs;
@@ -235,7 +241,7 @@ public class Manu3 {
     		}
 
     		// gain if put this video here, even though for now there is not enough space
-    		int gainPut = Manu.gainPut(request.Rv, cs, algo.problem, true);
+    		long gainPut = Manu.computeGainPut(request.Rv, cs, algo.problem, true);
 
     		if(gainPut<=0) {
     			System.out.println("no gain: weird");
@@ -285,7 +291,7 @@ public class Manu3 {
 		ArrayList<Video> serverVideos = new ArrayList<Video>();
 		for(int v : cacheServer.videos) {
 			Video video = new Video(v, algo.problem);
-			video.lossOut = Manu.lossOut(video.id, cacheServer, algo);
+			video.lossOut = Manu.computeLossOut(video.videoId, cacheServer, algo);
 			serverVideos.add(video);
 		}
 		
@@ -304,7 +310,7 @@ public class Manu3 {
 		int spaceFreed = 0;
 		for(Video video : serverVideos) {
 			result.totalLoss += video.lossOut;
-			result.videosToTakeOut.add(video.id);
+			result.videosToTakeOut.add(video.videoId);
 			spaceFreed += video.size;
 			
 			if(cacheServer.getSpaceTaken() - spaceFreed + newVideoSize <= algo.problem.X){
@@ -326,7 +332,7 @@ public class Manu3 {
 					singleVideoOutBetter = true;
 					result.totalLoss = video.lossOut;
 					result.videosToTakeOut.clear();
-					result.videosToTakeOut.add(video.id);
+					result.videosToTakeOut.add(video.videoId);
 				}
 			}
 		}
@@ -346,11 +352,11 @@ public class Manu3 {
 	
 	public static void doIt(String nameOfFile, int numRequestsPerIter) throws IOException {
     	
-		Algo algo = Algo.readSolution(nameOfFile, 3);
+		Algo algo = Algo.readSolution(nameOfFile, 32);
 		
-		File outFile = new File("data/output/manu_"+nameOfFile+"_3.out");
+		File outFile = new File("data/output/manu_"+nameOfFile+"_32.out");
 	    
-	    DoAlgo3(algo, outFile, 100, numRequestsPerIter, true);
+	    DoAlgo3(algo, outFile, 100, numRequestsPerIter, false);
 	    algo.printToFile(outFile);
 	    boolean correct = algo.checkCorrect();  
 	    System.out.println(String.format("Correct: %b", correct));
@@ -360,7 +366,7 @@ public class Manu3 {
     }
 	
 	public static void main(String[] args) throws IOException {
-		doIt("kittens", 500);
+		doIt("kittens", 1000);
 		//doIt("videos_worth_spreading", 10000);
 	}
 	

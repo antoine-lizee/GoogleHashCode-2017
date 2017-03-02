@@ -3,10 +3,10 @@ package main;
 import java.util.Map;
 
 public class Request {
-	int Rv, Re, Rn;
+	public int Rv, Re, Rn;
 	int id;
 	
-	CacheServer serverUsed;
+	public CacheServer serverUsed;
 	
 	public int bestPossibleGain = -1;
 	public int tmpGain;
@@ -30,6 +30,7 @@ public class Request {
 		
 		if(algo.problem.videoSizes[Rv] > algo.problem.X) {
 			this.bestPossibleGain = 0; // will never be able to improve request
+			System.out.println("***** request with video bigger than server capacity");
 			return;
 		}
 		

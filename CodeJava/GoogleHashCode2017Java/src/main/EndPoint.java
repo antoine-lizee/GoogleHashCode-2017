@@ -5,8 +5,8 @@ import java.util.HashMap;
 
 public class EndPoint {
 
-	int Ld;
+	public int Ld;
 	int K;
-	HashMap<Integer, Integer> latencies; // cache server id -> latency
+	public HashMap<Integer, Integer> latencies; // cache server id -> latency
 	
 }

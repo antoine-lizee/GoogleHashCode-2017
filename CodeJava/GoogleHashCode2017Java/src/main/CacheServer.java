@@ -4,31 +4,33 @@ import java.util.*;
 
 public class CacheServer {
 
-	int serverId;
+	public int serverId;
 	
 	
-	HashSet<Integer> videos; // ids of videos stored in this server
+	public HashSet<Integer> videos; // ids of videos stored in this server
 	public int spaceTaken;
 	
 	// returns true if actually added
-	public boolean putVideo(int videoId, Problem problem) {
+	public boolean putVideo(int videoId, Algo algo, boolean ignoreSpace) {
 		
-		int videoSize = problem.videoSizes[videoId];
+		int videoSize = algo.problem.videoSizes[videoId];
 		
 		if(videos.contains(videoId)) {
 			System.out.println("error: video already there");
 			return false;
-		} else if(getSpaceTaken()+videoSize > problem.X) {
+		} else if(!ignoreSpace && getSpaceTaken()+videoSize > algo.problem.X) {
 			System.out.println("error: not enough space");
 			return false;
 		}
+		
+		algo.setDirty(videoId);
 		
 		spaceTaken += videoSize;
 		videos.add(videoId);
 		
 		// when we put the video, some requests will use this one
-		for(Request request : problem.videoIdToRequests.get(videoId)) {
-			EndPoint endpoint = problem.endpoints.get(request.Re);
+		for(Request request : algo.problem.videoIdToRequests.get(videoId)) {
+			EndPoint endpoint = algo.problem.endpoints.get(request.Re);
 			
 			if(!endpoint.latencies.containsKey(this.serverId)) {
 				continue; // the request's endpoint and the cache server are not connected 
@@ -65,22 +67,28 @@ public class CacheServer {
 		return true;
 	}
 	
+	public ArrayList<Request> requestsUsingVideoInThisServer(int videoId, Algo algo) {
+		ArrayList<Request> l = new ArrayList<Request>();
+		for(Request request : algo.problem.videoIdToRequests.get(videoId)) {
+			if(request.serverUsed!=null && request.serverUsed == this) {
+				l.add(request);
+			}	
+		}
+		return l;
+	}
+	
 	public boolean removeVideoAndUpdateRequests(int videoId, Algo algo) {
 		
-		ArrayList<Request> affectedRequests = new ArrayList<Request>();
-		for(Request request : algo.problem.videoIdToRequests.get(videoId)) {
-			if(request.serverUsed == this) {
-				affectedRequests.add(request);
-			}
-				
-		}
+		ArrayList<Request> affectedRequests = requestsUsingVideoInThisServer(videoId, algo);
 		
 		if(!this.removeVideoNoCount(videoId, algo.problem)) {
 			return false;
 		}
 		
+		algo.setDirty(videoId);
+		
 		for(Request request : affectedRequests) {
-			request.serverUsed = Manu.findBestServerForRequest(request, algo);
+			request.serverUsed = Manu.findBestServerForRequest(request, algo, null);
 		}
 		
 		return true;

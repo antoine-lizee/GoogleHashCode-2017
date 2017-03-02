@@ -13,12 +13,12 @@ public class Problem {
 	
 	//private static final Logger LOGGER = Logger.getLogger(Algo.class.getName());
 	
-		int V, E, R, C, X;
+		public int V, E, R, C, X;
 		
-		int[] videoSizes; // of size V
-		ArrayList<EndPoint> endpoints;
-		HashSet<Request> requests;
-		HashMap<Integer, ArrayList<Request>> videoIdToRequests; // all the requests that need this video
+		public int[] videoSizes; // of size V
+		public ArrayList<EndPoint> endpoints;
+		public HashSet<Request> requests;
+		public HashMap<Integer, ArrayList<Request>> videoIdToRequests; // all the requests that need this video
 		
 	    public Problem(File file) throws IOException {
 			

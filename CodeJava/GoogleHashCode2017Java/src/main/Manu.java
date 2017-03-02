@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -17,188 +18,214 @@ public class Manu {
 	
 	public static void DoAlgo0(Algo algo, int iterations) {
 		
-		algo.servers.get(0).putVideo(2, algo.problem);
+		algo.servers.get(0).putVideo(2, algo, false);
 		
-		algo.servers.get(1).putVideo(1, algo.problem);
-		algo.servers.get(1).putVideo(3, algo.problem);
+		algo.servers.get(1).putVideo(1, algo, false);
+		algo.servers.get(1).putVideo(3, algo, false);
 		
-		algo.servers.get(2).putVideo(0, algo.problem);
-		algo.servers.get(2).putVideo(1, algo.problem);
+		algo.servers.get(2).putVideo(0, algo, false);
+		algo.servers.get(2).putVideo(1, algo, false);
 	}
 	
-	public static void DoAlgo1(Algo algo, int outerIter, int numVideosToRemove, File outFile) {
+	public static void DoAlgo1(Algo algo, int maxOuterIter, int maxPutPerIter, int intervalBigStep, File outFile, boolean allowPush) {
 		
-		//Random rn = new Random(23); // repeatable
-    	
-		boolean phaseB = false;
+		List<Video> initialAllocations = fillWithOptimVid(algo, maxOuterIter, maxPutPerIter, intervalBigStep, outFile, true, allowPush);
+		System.out.println(String.format("Initial allocations: %d", initialAllocations.size()));
 		
-		for(int n=0; n<outerIter; n++) {
+		//int DEPTH = 100;
+		//improveAtDepth(algo, DEPTH, maxOuterIter, 1, initialAllocations);
+		
+    }	
+	
+	// take out the last "depth" allocations and try to do better
+	protected static void improveAtDepth(Algo algo, int depth, int maxOuterIter, int maxPutPerIter, List<Video> allocations) {
+		
+		List<Video> videosToCheck = new ArrayList<Video>();
+		for(int i=allocations.size()-1; i>=Math.max(0, allocations.size()-depth); i--) {
+			videosToCheck.add(allocations.get(i));
+		}
+
+		int takenOut = 0;
+		for(Video video : videosToCheck) {
+			if(video.tmpBestServer.videos.contains(video.videoId)) {
+				boolean didTakeOut = video.tmpBestServer.removeVideoAndUpdateRequests(video.videoId, algo);
+				if(didTakeOut)
+					takenOut++;
+			} else {
+				//logger.log(Level.INFO, "weird, video not in server");
+			}
+		}
+		logger.log(Level.INFO, String.format("didTakeOut: %d/%d", takenOut, videosToCheck.size()));
+		
+		// compute the score if we started the last allocations with each of the removed videos
+		for(Video video : videosToCheck) {
+			video.scoreFinalIfPut = 0;
+			boolean didPut = video.tmpBestServer.putVideo(video.videoId, algo, false);
+			if(!didPut) {
+				logger.log(Level.INFO, "weird, cannot put video back in server");
+				continue;
+			} 
+			
+			List<Video> tmpAllocations = fillWithOptimVid(algo, maxOuterIter, maxPutPerIter, 100, null, false, false);
+			
+			video.scoreFinalIfPut = algo.computeScoreFinal();
+			
+			// clean what we just did
+			tmpAllocations.add(0, video);
+			for(Video tmpVideo : tmpAllocations) {
+				if(tmpVideo.tmpBestServer.videos.contains(tmpVideo.videoId)) {
+					tmpVideo.tmpBestServer.removeVideoAndUpdateRequests(tmpVideo.videoId, algo);
+				} else {
+					logger.log(Level.INFO, "weird, tmpVideo not in server");
+				}
+			}
+			
+			video.bestNextSteps = tmpAllocations; // includes this video
+			
+			System.out.println(String.format("Video %d, score %d", video.videoId, video.scoreFinalIfPut));
+		}
+		
+		// sort by best final score, do the one with the best final score
+		Video chosenVideo = Collections.max(videosToCheck, new Comparator<Video>() {
+			public int compare(Video a, Video b) {
+				return Integer.compare(a.scoreFinalIfPut, b.scoreFinalIfPut);
+		    }
+		});
+		
+		if(chosenVideo != videosToCheck.get(0)) {
+			int scoreDiff = chosenVideo.scoreFinalIfPut - videosToCheck.get(0).scoreFinalIfPut;
+			System.out.println(String.format("chose different move, with score diff: %d", scoreDiff));
+		}
+		
+		for(Video video : chosenVideo.bestNextSteps) {
+			boolean didPut = video.tmpBestServer.putVideo(video.videoId, algo, false);
+			if(!didPut) {
+				logger.log(Level.WARNING, "weird, cannot put video in server");
+			}
+		}
+    }
+	
+	// can start this from any valid state
+	private static List<Video> fillWithOptimVid(Algo algo, int maxIterations, int maxPutPerIter, int intervalBigStep, File outFile, boolean verbose, boolean allowPush) {
+		
+		int currentScoreFinal = algo.computeScoreFinal();
+		int bestScoreFinal = currentScoreFinal; 
+		
+		// Fill up the servers with the best videos allocations at each step and remember allocations in order
+		List<Video> allocations = new ArrayList<Video>();
+		
+		for(int n=0; n<maxIterations; n++) {
     		
     		if(!algo.checkCorrect()) {
     			System.out.println("error");
-    			return;
+    			return null;
     		}
     		
-    		if(n<=5 || n%10==0 && n > 0) {
-    			int scoreFinal = algo.computeScoreFinal();   
-    			System.out.println(n + " iterations, current score final: " + scoreFinal);
-    			//cleanUp(algo);
-    			//removeRandomVideos(algo, numVideosToRemove, rn);
+    		int maxPutThisIter = maxPutPerIter;
+    		if(n%intervalBigStep==0) {
     			if(n>5) {
-    				try {algo.printToFile(outFile);}
+    				//maxPutThisIter = 10*maxPutPerIter;
+    				maxPutThisIter = (5+rn.nextInt(50))*maxPutPerIter;
+    				//cleanUp(algo);
+    			}
+    			
+    			
+    		}
+    		
+    		if(verbose) {
+				System.out.println(n + " iterations, current score final: " + currentScoreFinal);
+			}
+    		
+    		{
+    			currentScoreFinal = algo.computeScoreFinal(); 
+    			if(outFile!=null && currentScoreFinal>bestScoreFinal) {
+    				bestScoreFinal = currentScoreFinal;
+        			try {algo.printToFile(outFile);}
     				catch(Exception e){};
     			}
-    			if(scoreFinal >= 0) 
-    				phaseB = true;
     		}
     		
 			// now, for each video in the best videos to put, compute the gain after next step
     		List<Integer> videosToCompute = new ArrayList<Integer>();
     		for(int i=0; i<algo.problem.V; i++) videosToCompute.add(i);
-			List<Video> videos = computeStep(algo, videosToCompute);
+    		
+			List<Video> videos = computeStep(algo, videosToCompute, allowPush);
 			
 			if(videos.size()==0) {
-				System.out.println(String.format("No more gain for any video. Finished after %d iterations", n));
+				if(verbose) {
+					System.out.println(String.format("No more gain for any video. Finished after %d iterations", n));
+				}
 				break;
 			}
 			
-			if(!phaseB){   // simply put the best videos in servers
-				int maxToPut = 5; // can use 1 for all but kittens
+			{   // simply put the best videos in servers (and remove if pushed)
 				
 				//System.out.println(String.format("Iter %d, Max to put: %d", n, maxToPut));
 				int numPut = 0;
 				for(Video video : videos) {
-					if(video.tmpBestGain>0 && video.tmpBestServer != null && video.tmpBestServer.getSpaceTaken()+video.size<=algo.problem.X) {
-						boolean didPut = video.tmpBestServer.putVideo(video.id, algo.problem);
-						if(didPut)
-							numPut++;
-						else
-							break;
+					if(video.ppi != null) {
+						// do only legal moves, so first, remove the videos legally
+						for(int vOut : video.ppi.videosOut) {
+							if(video.ppi.server.videos.contains(vOut)) {
+								boolean takeOut = video.ppi.server.removeVideoAndUpdateRequests(vOut, algo);
+								if(!takeOut) {
+									logger.log(Level.INFO, "weird: video not taken out");
+								}
+							} // else the video was already taken out
+						}
+						
+						
+						if(!video.ppi.server.videos.contains(video.ppi.videoId) &&
+								video.ppi.server.getSpaceTaken() + video.ppi.videoSize <= algo.problem.X) {
+
+							boolean didPut = video.ppi.server.putVideo(video.ppi.videoId, algo, false);
+							if(didPut) {
+								numPut++;
+								allocations.add(video);
+							} else { 
+								break;
+							}
+						}
 					}
-					if(numPut>=maxToPut) {
+					if(numPut>=maxPutThisIter) {
 						break;
 					}
 				}
 				if(numPut==0) {
-					System.out.println(String.format("Cound not put after %d iterations", n));
+					System.out.println(String.format("Weird: cound not put after %d iterations", n));
 					break;
 				}
     		}
-			
-			else { // we are in phase B
-				int DEPTH = 5;
-				
-				List<Video> videosToStudy = new ArrayList<Video>(videos.subList(0, Math.min(50, videos.size())));
-				
-				List<Integer> videosToComputeSteps = new ArrayList<Integer>();
-	    		for(Video v : videos) {
-	    			videosToComputeSteps.add(v.id);
-	    			if(videosToComputeSteps.size() > 1000) break;
-	    		}
-	    		
-				// for the best videos, act as if we put it in the corresponding server, 
-				// and compute the gain of the next videos we would put 
-				for(Video video : videosToStudy) {
-					
-					video.bestNextSteps = new ArrayList<Video>();
-					video.tmpBestServer.putVideo(video.id, algo.problem);
-					
-					for(int step=0; step<DEPTH; step++) {
-					
-						List<Video> videosNextStep = computeStep(algo, videosToComputeSteps);
-						if(videosNextStep.size()>0) {
-							// put it in to compute next steps properly
-							Video nextBestVideo = videosNextStep.get(0);
-							nextBestVideo.tmpBestServer.putVideo(nextBestVideo.id, algo.problem);
-							video.bestNextSteps.add(nextBestVideo);	
-						} else {
-							break;
-						}
-					}
-					
-					// clean what we just did
-					video.tmpBestServer.removeVideoAndUpdateRequests(video.id, algo);
-					for(Video nextStepVideo : video.bestNextSteps) {
-						nextStepVideo.tmpBestServer.removeVideoAndUpdateRequests(nextStepVideo.id, algo);
-					}
-					
-					// could also compute just sum of gains / sum of bytes taken
-					video.cumulScoreNextSteps = video.tmpBestGain*1f/video.size;
-					for(Video nextStepVideo : video.bestNextSteps) {
-						video.cumulScoreNextSteps += nextStepVideo.tmpBestGain*1f/nextStepVideo.size;
-					}
-				}
-				
-				// select the videos which maximise the cumulative gain & space
-				Collections.sort(videosToStudy, new Comparator<Video>() {
-					public int compare(Video a, Video b) {
-						return Float.compare(a.cumulScoreNextSteps, b.cumulScoreNextSteps);
-				    }
-				});
-				Collections.reverse(videosToStudy);
-				
-				// check if the videos we chose are the same as the first videos of the initial list
-				{
-					HashSet<Integer> chosen = new HashSet<Integer>();
-					chosen.add(videosToStudy.get(0).id);
-					for(Video v : videosToStudy.get(0).bestNextSteps) chosen.add(v.id);
-					
-					boolean different = false;
-					if(videos.size() < chosen.size()) {
-						different = true;
-					} else {
-						for(int i=0; i<chosen.size(); i++) {
-							if(!chosen.contains(videos.get(i).id)) {
-								different = true;
-							}
-						}	
-					}
-					
-					if(different)
-						System.out.print(".");
-				}
-				
-				//logger.log(Level.INFO, String.format("original: %d, before: %d, after: %d", videos.get(0).id, beforeID, videosToStudy.get(0).id));
-			
-				// finally, put the video list we found was best
-    			Video best = videosToStudy.get(0);
-    			boolean didPut = best.tmpBestServer.putVideo(best.id, algo.problem);
-    			if(!didPut) {
-    				System.out.println(String.format("Cound not put best, %d iter", n));
-    			} else {
-    				for(Video nextStepVideo : best.bestNextSteps) {
-    				
-    					boolean didPutNext = nextStepVideo.tmpBestServer.putVideo(nextStepVideo.id, algo.problem);
-    					if(!didPutNext) {
-    						System.out.println(String.format("Cound not put best next step, %d iter", n));
-    						break;
-    					}
-    				}
-    			}
-    		}
-    		
-    	}
+		}
 		
+		return allocations;
 		
 	}
 	
 	public static String idsToString(List<Video> videos) {
 		StringBuilder sb = new StringBuilder();
 		for(Video video : videos) {
-			sb.append(video.id+", ");
+			sb.append(video.videoId+", ");
 		}
 		sb.delete(sb.length()-2, sb.length());
 		
 		return sb.toString();
 	}
 	
-	// for each video, find the server where we gain most, and remember the server and associated gain
+	public static int NUM_THREADS = 7;
+	
+	// for each video, find the server [with enough capacity] where we gain most, and remember the server and associated gain
 	// only keeps the videos with a gain > 0 and sorts the final list by decreasing gain 
-	private static List<Video> computeStep(Algo algo, Collection<Integer> videoIdsToCompute) {
+	private static List<Video> computeStep(Algo algo, Collection<Integer> videoIdsToCompute, boolean allowPush) {
 		
-		//final int numTotal = algo.problem.V;
-		//final AtomicInteger processed = new AtomicInteger();
-		ExecutorService executor = Executors.newFixedThreadPool(7); 
+		
+		// we will need lossOuts
+		Algo.updateAllLossOutAndGainsPut(NUM_THREADS, algo, false);
+		
+		
+		final int numTotal = algo.problem.V;
+		final AtomicInteger processed = new AtomicInteger();
+		ExecutorService executor = Executors.newFixedThreadPool(NUM_THREADS); 
 		
 		final List<Video> videos = new ArrayList<Video>();
 		for(int videoId : videoIdsToCompute) {
@@ -212,20 +239,28 @@ public class Manu {
 				@Override
 				public void run() {
 					try {
-						//int numProcessed = processed.incrementAndGet();
-						//if(numProcessed%100==0) logger.info("Computing gains "+numProcessed+"/"+numTotal);
+						int numProcessed = processed.incrementAndGet();
+						if(allowPush) {
+							//if(numProcessed%10==0) logger.info("Computing gains "+numProcessed+"/"+numTotal);
+						}
 
 						// synchronized (anything) {}
-		    			for(CacheServer cs : algo.getPotentialServers(video.id)) {
-		    				int gain = gainPut(video.id, cs, algo.problem, false);
-		    				if(gain > video.tmpBestGain) {
-		    					video.tmpBestGain = gain;
-		    					video.tmpBestServer = cs;
+						video.tmpBestGain = Long.MIN_VALUE;
+								
+		    			for(CacheServer cs : algo.getPotentialServers(video.videoId)) {
+		    				if(!cs.videos.contains(video.videoId)) {
+		    					PutPushInfo ppi = PutPushInfo.computePutPush(video.videoId, cs, algo, allowPush);
+		    					//long gain = gainPut(video.id, cs, algo.problem, false);
+		    					if(ppi.getAbsGain() > video.tmpBestGain) {
+		    						video.tmpBestGain = ppi.getAbsGain();
+		    						video.tmpBestServer = cs;
+		    						video.ppi = ppi;
+		    					}
 		    				}
 		    			}
 						
 					} catch (Exception e) {
-						logger.log(Level.WARNING, "Failure computing gains, videoId: " + video.id, e);
+						logger.log(Level.WARNING, "Failure computing gains, videoId: " + video.videoId, e);
 					}
 				}
 			});
@@ -241,17 +276,25 @@ public class Manu {
 		}
 		//logger.log(Level.INFO, "Finished multithreaded comoutation of gains.");
 		
-		// for faster sort
 		for(int i=videos.size()-1; i>=0; i--) {
-			if(videos.get(i).tmpBestGain <= 0) {
+			if(videos.get(i).ppi==null) { // happens when all servers useful for video already contain it
 				videos.remove(i);
+			}
+		}
+		
+		// for faster sort, if we don't allow push, we only have positive gains
+		if(!allowPush) {
+			for(int i=videos.size()-1; i>=0; i--) {
+				if(videos.get(i).ppi.getAbsGain() <= 0) {
+					videos.remove(i);
+				}
 			}
 		}
 		
 		Collections.sort(videos, new Comparator<Video>() {
 		    public int compare(Video a, Video b) {
 		    	//return Integer.compare(a.tmpBestGain, b.tmpBestGain);
-		    	return Float.compare(a.tmpBestGain*1f/a.size, b.tmpBestGain*1f/b.size);
+		    	return Double.compare(a.ppi.getAbsGain()*1d/Math.pow(a.ppi.videoSize, POWER), b.ppi.getAbsGain()*1d/Math.pow(b.ppi.videoSize, POWER));
 		    }
 		});
 		Collections.reverse(videos);
@@ -260,7 +303,7 @@ public class Manu {
 	}
 	
 	// gain if we put this video in this server, -1 if already there or not enough space
-	public static int gainPut(int videoId, CacheServer cacheServer, Problem problem, boolean ignoreSpace) {
+	public static long computeGainPut(int videoId, CacheServer cacheServer, Problem problem, boolean ignoreSpace) {
 		
 		if(cacheServer.videos.contains(videoId)) {
 			return -1;
@@ -279,7 +322,7 @@ public class Manu {
 		
 		// when we put the video here in this server, we must look at all the requests using this video
 		// and see if it changes their route, a video added can only improve scores
-		int gain = 0;
+		long gain = 0;
 		
 		for(Request request : problem.videoIdToRequests.get(videoId)) {
 			EndPoint endpoint = problem.endpoints.get(request.Re);
@@ -289,12 +332,12 @@ public class Manu {
 			}
 			
 			// latency to current server
-			int currentLatency = endpoint.Ld;
+			long currentLatency = endpoint.Ld;
 			if(request.serverUsed != null) {
 				currentLatency = endpoint.latencies.get(request.serverUsed.serverId);
 			}
 			
-			int newLatency = endpoint.latencies.get(cacheServer.serverId);
+			long newLatency = endpoint.latencies.get(cacheServer.serverId);
 			
 			if(newLatency < currentLatency) {
 				gain += request.Rn * (currentLatency - newLatency);
@@ -307,6 +350,7 @@ public class Manu {
 	
 	// The gain we would get if put each video in each server (in order)
     // If we cannot put each video in each server, returns -1 
+	/*
 	private static int gainPutList(List<Integer> videoIds, List<CacheServer> servers, Problem problem) {
 		
 		int n = videoIds.size();
@@ -364,10 +408,10 @@ public class Manu {
 		
 		return gain;
 		
-	}
+	}*/
 	
 	// loss of score if we take this video out of this server, -1 if video not in server
-	public static int lossOut(int videoId, CacheServer cacheServer, Algo algo) {
+	public static long computeLossOut(int videoId, CacheServer cacheServer, Algo algo) {
 			
 		if(!cacheServer.videos.contains(videoId)) {
 			System.out.println("Server does not have video.");
@@ -377,46 +421,27 @@ public class Manu {
 		// when we take the video out of this server, 
 		// we must look at all the requests using this video and server
 		// see how it changes their route.
-		int loss = 0;
+		long loss = 0;
 		
 		for(Request request : algo.problem.videoIdToRequests.get(videoId)) {
 			if(request.Rv!=videoId || request.serverUsed != cacheServer) {
 				continue;
 			}
 			
-			int currentScore = request.computeRequestScore(algo.problem);
+			long currentScore = request.computeRequestScore(algo.problem);
 			
-			EndPoint endpoint = algo.problem.endpoints.get(request.Re);
-			//int requestVideoSize = algo.problem.videoSizes[request.Rv];
-			int minLatency = endpoint.Ld; // latency to datacenter
-	    	CacheServer bestCacheServer = null;
-	    			
-	    	for(int serverId : endpoint.latencies.keySet()) {
-	    				
-	    		CacheServer cs = algo.servers.get(serverId);
-	    		if(cs != cacheServer) { // must be a different one
-	    			boolean serverHasVideo = cs.videos.contains(request.Rv);
-	    			
-	    			//boolean serverHasRoomForVideo = cs.getSpaceTaken() + requestVideoSize <= algo.problem.X;
-	    			
-	    			if(serverHasVideo){// || serverHasRoomForVideo) {
-	    				int latency = endpoint.latencies.get(cs.serverId);
-	    				if(latency < minLatency) {
-	    					minLatency = latency;
-	    					bestCacheServer = cs;
-	    				}
-	    			}
-	    			
-	    		}
-	    	}
-	    	
-	    	int newScore = 0;
-	    	if(bestCacheServer!=null) {
-	    		newScore = request.Rn * (endpoint.Ld - minLatency);
-	    	}
-	    	
+			CacheServer bestNewServer = findBestServerForRequest(request, algo, cacheServer);
+			
+			long newScore = 0;
+			if(bestNewServer!=null) {
+				EndPoint endpoint = algo.problem.endpoints.get(request.Re);
+				int bestLatency = endpoint.latencies.get(bestNewServer.serverId);
+				newScore = request.Rn * (endpoint.Ld - bestLatency);
+			}
+			
 			if(newScore > currentScore) {
-				System.out.println("Removing video would improve score: there was a problem before.");
+				System.out.println("Removing video would improve score: this should be impossible"); 
+				// because each Request should always use the best possible server
 			}
 			
 			loss += currentScore - newScore;
@@ -424,6 +449,9 @@ public class Manu {
 		
 		return loss;
 	}
+	
+
+	
 	
     // removes unused videos from the servers
     public static void cleanUp(Algo algo) {
@@ -444,15 +472,14 @@ public class Manu {
     			}
     			
     			if(numRequestsUsingVideoInServer == 0) {
-    				// nobody is using this video: remove video from server
+    				// no Request is using this video in this server: remove video from server
     				videosToRemove.add(videoId);
-    				
     			}
     			
     		}
     		
     		for(int v: videosToRemove) {
-    			server.removeVideoNoCount(v, algo.problem);
+    			server.removeVideoAndUpdateRequests(v, algo);
     			cleanups++;
     		}
     	}
@@ -479,6 +506,7 @@ public class Manu {
     		numVideosRemoved++;
     		// now tell the requests using the video that its over
     		// tell the requests using this video on this server that they cannot anymore
+    		
     		for(Request request : algo.problem.videoIdToRequests.get(videoId)) {
         		if(request.serverUsed == cs) {
         			request.serverUsed = null;
@@ -489,13 +517,13 @@ public class Manu {
     	
     	// find the new server they will use
     	for(Request request : requestsToRefind) {
-    		request.serverUsed = findBestServerForRequest(request, algo);	
+    		request.serverUsed = findBestServerForRequest(request, algo, null);	
     	}
     	
     	System.out.println("removed: " + numVideosRemoved);
     }
     
-    public static CacheServer findBestServerForRequest(Request request, Algo algo) {
+    public static CacheServer findBestServerForRequest(Request request, Algo algo, CacheServer excluded) {
     	// find the cache servers that have the video and are connected to the endpoint
     	EndPoint endpoint = algo.problem.endpoints.get(request.Re);
     			
@@ -505,6 +533,11 @@ public class Manu {
     	for(int serverId : endpoint.latencies.keySet()) {
     				
     		CacheServer cs = algo.servers.get(serverId);
+    		
+    		if(excluded != null && cs.equals(excluded)) {
+    			continue;
+    		}
+    		
     		boolean serverHasVideo = cs.videos.contains(request.Rv);
     				
     		if(serverHasVideo) {
@@ -520,12 +553,36 @@ public class Manu {
     	
     }
     
-    public static void doIt(String nameOfFile, int outerIter, int numVideosToRemove) throws IOException {
-    	Algo algo = new Algo(new Problem(new File("data/input/"+nameOfFile+".in")));
+    /*
+    public static double optimalPower(String nameOfFile) {
+    	
+    	if(nameOfFile.equals("videos_worth_spreading")) {
+    		return 0.85d;
+    	}
+    	
+    	if(nameOfFile.equals("kittens")) {
+    		return 0.75d;
+    	}
+    	
+    	if(nameOfFile.equals("me_at_the_zoo")) {
+    		return 1d;
+    	}
+    	
+    	return 1d;
+    }*/
+    
+    private static double POWER = 1d;//0.85d; //1d
+    
+    public static Random rn;
+    
+    public static void doIt(String nameOfFile, int maxOuterIter, int maxPutPerIter, int intervalBigStep) throws IOException {
+    	//Algo algo = new Algo(new Problem(new File("data/input/"+nameOfFile+".in")), nameOfFile);
+    	Algo algo = Algo.readSolution(nameOfFile, 63);
 	    
-	    File outFile = new File("data/output/manu_"+nameOfFile+"_21.out");
+    	File outFile = new File("data/output/manu_"+nameOfFile+"_63.out");
 	    
-	    DoAlgo1(algo, outerIter, numVideosToRemove, outFile);
+	    //DoAlgo1(algo, maxOuterIter, maxPutPerIter, intervalBigStep, outFile, false);
+	    DoAlgo1(algo, maxOuterIter, maxPutPerIter, intervalBigStep, outFile, true);
 	    algo.printToFile(outFile);
 	    boolean correct = algo.checkCorrect();  
 	    System.out.println(String.format("Correct: %b", correct));
@@ -535,11 +592,12 @@ public class Manu {
     }
     
 	public static void main(String[] args) throws IOException {
-		//doIt("me_at_the_zoo", Integer.MAX_VALUE, 0);
+		rn = new Random(23); // repeatable
+		//doIt("me_at_the_zoo", Integer.MAX_VALUE, 3, 100);
 		//doIt("example", Integer.MAX_VALUE, 0);
-		doIt("videos_worth_spreading", Integer.MAX_VALUE, 0); // 10000, 1, 5
-		//doIt("trending_today", Integer.MAX_VALUE, 0); // 3, 1, 0
-		//doIt("kittens", Integer.MAX_VALUE, 0);
+		doIt("videos_worth_spreading", Integer.MAX_VALUE, 5, 100); //(25, 200)
+		//doIt("trending_today", Integer.MAX_VALUE, 100); 
+		//doIt("kittens", Integer.MAX_VALUE, 20, 50);
 		
 	}
 	

@@ -1,8 +1,14 @@
-package main;
+package unused;
 
 import java.io.File;
 import java.io.IOException;
 import java.util.*;
+
+import main.Algo;
+import main.CacheServer;
+import main.EndPoint;
+import main.Problem;
+import main.Request;
 
 public class Manu4 {
 
@@ -63,7 +69,7 @@ public class Manu4 {
 				
     			for(CacheServer cs : ss_info.acceptableServers) {
     				ArrayList<CacheServer> l = new ArrayList<CacheServer>(); l.add(cs);
-    				int gain = gainPut(videoId, l, algo.problem, false);
+    				int gain = gainPut(videoId, l, algo, false);
     				ss_info.acceptableServerGains.put(cs,  gain);
     				
     				if(gain > ss_info.gain) { // update best just in case
@@ -98,7 +104,7 @@ public class Manu4 {
     			ArrayList<ArrayList<CacheServer>> pairs = getPairs(bestServers);
     			
     			for(ArrayList<CacheServer> pair : pairs) {
-    				int gain = gainPut(videoId, pair, algo.problem, false);
+    				int gain = gainPut(videoId, pair, algo, false);
     				
     				if(gain > ss_info.gain) {
     					ss_info.gain = gain;
@@ -126,7 +132,7 @@ public class Manu4 {
 				if(serversInfo.bestServerSet != null) {
 					System.out.print(serversInfo.bestServerSet.size() + " ");
 					
-					gainPut(serversInfo.videoId, serversInfo.bestServerSet, algo.problem, true);
+					gainPut(serversInfo.videoId, serversInfo.bestServerSet, algo, true);
 					numPut++;
 				}
 				if(numPut>=maxToPut) {
@@ -179,9 +185,9 @@ public class Manu4 {
 	// gain if we put this video in ALL servers of the list
 	// return -1 if there is any of them where the video already is,
 	// of where the video is too big, or wouldn't help
-	public static int gainPut(int videoId, Collection<CacheServer> servers, Problem problem, boolean DO_PUT) {
+	public static int gainPut(int videoId, Collection<CacheServer> servers, Algo algo, boolean DO_PUT) {
 		
-		int videoSize = problem.videoSizes[videoId];
+		int videoSize = algo.problem.videoSizes[videoId];
 		
 		for(CacheServer cs : servers) {
 			if(cs.videos.contains(videoId)) {
@@ -193,7 +199,7 @@ public class Manu4 {
 				System.out.println("video would never help in this server");
 				return -1;
 			}*/
-			if(cs.getSpaceTaken() + videoSize > problem.X) {
+			if(cs.getSpaceTaken() + videoSize > algo.problem.X) {
 				System.out.println("not enough space for this video");
 				return -1;
 			}
@@ -203,8 +209,8 @@ public class Manu4 {
 		// and see if it changes their route
 		int gain = 0;
 		
-		for(Request request : problem.videoIdToRequests.get(videoId)) {
-			EndPoint endpoint = problem.endpoints.get(request.Re);
+		for(Request request : algo.problem.videoIdToRequests.get(videoId)) {
+			EndPoint endpoint = algo.problem.endpoints.get(request.Re);
 			
 			int currentLatency = endpoint.Ld;
 			if(request.serverUsed != null) {
@@ -233,7 +239,7 @@ public class Manu4 {
 				gain += request.Rn * (currentLatency - bestNewLatencyForRequest);
 				if(DO_PUT) {
 					request.serverUsed = bestNewServerForRequest;
-					request.serverUsed.putVideo(videoId, problem);
+					request.serverUsed.putVideo(videoId, algo, false);
 				}
 			}
 		}
